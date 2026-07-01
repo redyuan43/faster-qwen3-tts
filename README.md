@@ -16,6 +16,9 @@ pip install faster-qwen3-tts
 
 ## Quick Start
 
+See [docs/api.md](docs/api.md) for the HTTP gateway API, including client-side playback recommendations.
+
+
 ### Python
 
 ```python
@@ -149,6 +152,40 @@ curl http://localhost:8000/v1/audio/speech \
 ```
 
 To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
+
+### Single-GPU CustomVoice backup and failover gateway
+
+For a small backup host with one GPU, `examples/single_gpu_custom_voice_server.py`
+serves the same CustomVoice HTTP surface as the Ray service without starting Ray.
+It supports `/health`, `/api/status`, `/api/tts/plan`, `/api/tts/speak`,
+`/api/tts/speak_json`, and `/v1/audio/speech`.
+
+```bash
+QWEN_TTS_MODEL=/path/to/Qwen3-TTS-12Hz-1.7B-CustomVoice \
+QWEN_TTS_PORT=8091 \
+./start_qwen3_tts_single.sh
+```
+
+`examples/tts_failover_gateway.py` keeps the client-facing URL stable. Run the
+primary TTS service on an internal port, run the gateway on the public port, and
+configure one or more backup URLs:
+
+```bash
+QWEN_TTS_HOST=127.0.0.1 QWEN_TTS_PORT=8092 ./start_qwen3_tts_ray.sh
+
+QWEN_TTS_PRIMARY_URL=http://127.0.0.1:8092 \
+QWEN_TTS_BACKUP_URLS=http://edge-host:8091 \
+./start_qwen3_tts_gateway.sh
+```
+
+The gateway retries backup backends when the primary connection fails, times out,
+or returns a 5xx response. Responses include `X-TTS-Backend`,
+`X-TTS-Backend-Url`, and `X-TTS-Failover` headers so callers can tell which
+backend served a request.
+
+For client and agent integrations, see [`docs/api.md`](docs/api.md). It covers
+the recommended `/api/tts/plan` -> `/api/tts/speak` flow, request fields,
+diagnostic headers, timeouts, and playback responsibilities.
 
 ## Results
 
