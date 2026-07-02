@@ -19,6 +19,12 @@ LANGUAGE="${QWEN_TTS_LANGUAGE:-Auto}"
 SPEAKER="${QWEN_TTS_SPEAKER:-Serena}"
 CHUNK_SIZE="${QWEN_TTS_CHUNK_SIZE:-8}"
 MAX_NEW_TOKENS="${QWEN_TTS_MAX_NEW_TOKENS:-512}"
+PROSODY_ENABLED="${QWEN_TTS_PROSODY_OPTIMIZER_ENABLED:-1}"
+PROSODY_BASE_URL="${QWEN_TTS_PROSODY_BASE_URL:-http://agx.taild500c8.ts.net:11434/v1}"
+PROSODY_MODEL="${QWEN_TTS_PROSODY_MODEL:-caps-voice-edit-qwen3-4b:latest}"
+PROSODY_TIMEOUT_S="${QWEN_TTS_PROSODY_TIMEOUT_S:-2.5}"
+PROSODY_MAX_TOKENS="${QWEN_TTS_PROSODY_MAX_TOKENS:-160}"
+PROSODY_MAX_INPUT_CHARS="${QWEN_TTS_PROSODY_MAX_INPUT_CHARS:-1200}"
 
 if [ ! -x "$PYTHON_BIN" ]; then
     echo "ERROR: Python not found or not executable: $PYTHON_BIN" >&2
@@ -41,6 +47,12 @@ After=network-online.target
 Type=simple
 WorkingDirectory=${ROOT_DIR}
 Environment=CUDA_VISIBLE_DEVICES=${GPU_LIST}
+Environment=QWEN_TTS_PROSODY_OPTIMIZER_ENABLED=${PROSODY_ENABLED}
+Environment=QWEN_TTS_PROSODY_BASE_URL=${PROSODY_BASE_URL}
+Environment=QWEN_TTS_PROSODY_MODEL=${PROSODY_MODEL}
+Environment=QWEN_TTS_PROSODY_TIMEOUT_S=${PROSODY_TIMEOUT_S}
+Environment=QWEN_TTS_PROSODY_MAX_TOKENS=${PROSODY_MAX_TOKENS}
+Environment=QWEN_TTS_PROSODY_MAX_INPUT_CHARS=${PROSODY_MAX_INPUT_CHARS}
 ExecStart=${PYTHON_BIN} ${ROOT_DIR}/examples/single_gpu_custom_voice_server.py --model ${MODEL_PATH} --host ${HOST} --port ${PORT} --device ${DEVICE} --attn ${ATTN} --dtype ${DTYPE} --language ${LANGUAGE} --speaker ${SPEAKER} --chunk-size ${CHUNK_SIZE} --max-new-tokens ${MAX_NEW_TOKENS}
 Restart=on-failure
 RestartSec=5

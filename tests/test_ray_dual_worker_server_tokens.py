@@ -3,12 +3,14 @@ from examples.ray_dual_worker_server import (
     CapsWriterSpeakRequest,
     PlaybackFirstRequest,
     SpeechRequest,
+    TTSPlanRequest,
     PIPELINE_VERSION,
     _hit_token_cap,
     _next_retry_tokens,
     _result_quality_issues,
     _stable_language_for_tts,
     _status_payload,
+    tts_plan,
     _estimate_max_new_tokens,
     _resolve_max_new_tokens,
     _run_playback_first,
@@ -17,6 +19,7 @@ from examples.ray_dual_worker_server import (
     _to_wav_bytes,
     _wav_stream_header,
 )
+from examples.tts_prosody_planner import ProsodyPlan
 import asyncio
 import numpy as np
 import pytest
@@ -196,10 +199,38 @@ def test_status_payload_adds_v1_capabilities_without_removing_existing_fields():
     assert payload["capabilities"]["supports_plan"] is True
     assert payload["capabilities"]["supports_trace_id"] is True
     assert payload["capabilities"]["supports_affinity_key"] is True
+    assert payload["capabilities"]["supports_prosody_optimization"] is True
     assert payload["pipeline_version"] == PIPELINE_VERSION
+    assert "prosody" in payload["planning"]
     assert payload["generation"]["do_sample"] is False
     assert payload["client_defaults"]["recommended_speak_concurrency"] == 2
     assert payload["audio"]["content_type"] == "audio/wav"
+
+
+def test_tts_plan_applies_prosody_optimizer(monkeypatch):
+    import json
+    import examples.ray_dual_worker_server as server
+
+    def fake_optimize(text, lang_hint=None, trace_id=None):
+        assert "好的按照你说的来吧" in text
+        assert lang_hint == "Chinese"
+        assert trace_id == "prosody-test"
+        return ProsodyPlan("好的。按照你说的来吧。", True, "local_lm", 8, "pause")
+
+    monkeypatch.setenv("QWEN_TTS_NORMALIZER", "basic")
+    monkeypatch.setattr(server, "optimize_prosody", fake_optimize)
+
+    response = asyncio.run(
+        tts_plan(TTSPlanRequest(text="好的按照你说的来吧", lang_hint="Chinese", trace_id="prosody-test"))
+    )
+    payload = json.loads(response.body.decode("utf-8"))
+
+    assert payload["text"] == "好的。按照你说的来吧。"
+    assert payload["chunks"][0]["text"] == "好的。按照你说的来吧。"
+    assert payload["prosody_optimizer"] == "local_lm"
+    assert payload["prosody_changed"] is True
+    assert payload["prosody_latency_ms"] == 8
+    assert payload["sanitized"] is True
 
 
 def test_quality_retry_raises_when_all_attempts_and_fallback_fail(monkeypatch):

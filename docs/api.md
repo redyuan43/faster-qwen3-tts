@@ -82,6 +82,7 @@ Useful fields:
     "supports_plan": true,
     "supports_max_new_tokens": true,
     "supports_trace_id": true,
+    "supports_prosody_optimization": true,
     "tts_validation_enabled": true
   },
   "client_defaults": {
@@ -97,7 +98,15 @@ Useful fields:
     "default_max_chars_per_chunk": 90,
     "max_chars_per_chunk_limit": 240,
     "min_chars_per_chunk": 28,
-    "max_segments": 120
+    "max_segments": 120,
+    "prosody": {
+      "enabled": true,
+      "base_url": "http://agx.taild500c8.ts.net:11434/v1",
+      "model": "caps-voice-edit-qwen3-4b:latest",
+      "timeout_s": 2.5,
+      "max_tokens": 160,
+      "max_input_chars": 1200
+    }
   },
   "audio": {
     "format": "wav",
@@ -173,7 +182,11 @@ Response:
   "total_chunks": 1,
   "truncated": false,
   "sanitized": false,
-  "normalizer": "wetext"
+  "normalizer": "wetext",
+  "prosody_optimizer": "local_lm",
+  "prosody_changed": true,
+  "prosody_latency_ms": 560,
+  "prosody_error": ""
 }
 ```
 
@@ -189,6 +202,27 @@ Response fields:
 - `sanitized`: `true` means the planner changed the input text before TTS.
 - `truncated`: `true` means the planner hit the segment limit. The caller should
   decide whether to request a shorter message or speak the returned chunks only.
+- `prosody_optimizer`: `agx_lm`, `local_lm`, or `openai_compatible_lm` means an
+  OpenAI-compatible prosody optimizer rewrote the text; `fallback`, `disabled`,
+  or `skipped` means the planner used the normalized text without LM changes.
+
+Prosody optimization is enabled by default for `/api/tts/plan` only. It uses
+the AGX OpenAI-compatible Ollama endpoint by default and falls back automatically
+if the model is unavailable, too slow, or returns an unsafe rewrite.
+
+Configuration:
+
+```text
+QWEN_TTS_PROSODY_OPTIMIZER_ENABLED=1
+QWEN_TTS_PROSODY_BASE_URL=http://agx.taild500c8.ts.net:11434/v1
+QWEN_TTS_PROSODY_MODEL=caps-voice-edit-qwen3-4b:latest
+QWEN_TTS_PROSODY_TIMEOUT_S=2.5
+QWEN_TTS_PROSODY_MAX_TOKENS=160
+QWEN_TTS_PROSODY_MAX_INPUT_CHARS=1200
+```
+
+Set `QWEN_TTS_PROSODY_OPTIMIZER_ENABLED=0` and restart the TTS backend to return
+to the old planning behavior.
 
 Example:
 

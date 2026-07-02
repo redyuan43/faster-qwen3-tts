@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 try:
+    from examples.tts_prosody_planner import optimize_prosody, prosody_config
     from examples.tts_text_normalizer import has_readable_text, normalize_for_tts
     from examples.tts_output_validator import (
         analyze_wav_bytes,
@@ -40,6 +41,7 @@ try:
         validation_headers,
     )
 except ModuleNotFoundError:
+    from tts_prosody_planner import optimize_prosody, prosody_config
     from tts_text_normalizer import has_readable_text, normalize_for_tts
     from tts_output_validator import (
         analyze_wav_bytes,
@@ -158,8 +160,8 @@ def _sanitize_tts_text(text: str, lang_hint: str | None = None) -> str:
     return normalize_for_tts(text, lang_hint=lang_hint).text
 
 
-def _split_sentences(text: str) -> list[str]:
-    normalized = _sanitize_tts_text(text)
+def _split_sentences(text: str, *, sanitize: bool = True) -> list[str]:
+    normalized = _sanitize_tts_text(text) if sanitize else (text or "").strip()
     if not normalized:
         return []
     parts = re.split(r"(?<=[。.!！？?；;])\s*", normalized)
@@ -304,17 +306,19 @@ async def _synthesize_split_fallback(
     }
 
 
-def _planning_config() -> dict[str, int]:
+def _planning_config() -> dict[str, Any]:
     default_max_chars = int(os.getenv("QWEN_TTS_PLAN_MAX_CHARS", "90"))
     max_chars_limit = int(os.getenv("QWEN_TTS_PLAN_MAX_CHARS_LIMIT", "240"))
     min_chars = int(os.getenv("QWEN_TTS_PLAN_MIN_CHARS", "28"))
     max_segments = int(os.getenv("QWEN_TTS_PLAN_MAX_SEGMENTS", "120"))
-    return {
+    payload: dict[str, Any] = {
         "default_max_chars_per_chunk": default_max_chars,
         "max_chars_per_chunk_limit": max_chars_limit,
         "min_chars_per_chunk": min_chars,
         "max_segments": max_segments,
     }
+    payload["prosody"] = prosody_config()
+    return payload
 
 
 def _status_payload(rows: list[dict[str, Any]], backend: str) -> dict[str, Any]:
@@ -354,6 +358,7 @@ def _status_payload(rows: list[dict[str, Any]], backend: str) -> dict[str, Any]:
             "supports_max_new_tokens": True,
             "supports_trace_id": True,
             "supports_wav_validation": True,
+            "supports_prosody_optimization": True,
             "tts_validation_enabled": validation_enabled(),
         },
         "client_defaults": {
@@ -387,8 +392,9 @@ def _split_tts_text_into_chunks(
     max_chars: int,
     min_chars: int,
     max_segments: int,
+    sanitize: bool = True,
 ) -> tuple[list[str], bool]:
-    content = _sanitize_tts_text(text)
+    content = _sanitize_tts_text(text) if sanitize else (text or "").strip()
     if not content:
         return [], False
 
@@ -397,7 +403,7 @@ def _split_tts_text_into_chunks(
     max_segments = max(1, int(max_segments))
     if len(content) <= max_chars:
         return [content], False
-    sentences = _split_sentences(content) or [content]
+    sentences = _split_sentences(content, sanitize=False) or [content]
 
     chunks: list[str] = []
     current = ""
@@ -917,6 +923,7 @@ async def tts_plan(req: TTSPlanRequest) -> JSONResponse:
     if not original_content:
         raise HTTPException(status_code=400, detail="No text provided")
     if not has_readable_text(content):
+        prosody = optimize_prosody("", lang_hint=req.lang_hint, trace_id=req.trace_id)
         return JSONResponse(
             {
                 "success": True,
@@ -928,8 +935,16 @@ async def tts_plan(req: TTSPlanRequest) -> JSONResponse:
                 "sanitized": True,
                 "normalizer": normalized.normalizer,
                 "normalization_trace": list(normalized.normalization_trace),
+                "prosody_optimizer": prosody.source,
+                "prosody_changed": prosody.changed,
+                "prosody_latency_ms": prosody.latency_ms,
+                "prosody_error": prosody.error,
+                "prosody_trace": prosody.to_trace(),
             }
         )
+
+    prosody = await asyncio.to_thread(optimize_prosody, content, req.lang_hint, req.trace_id)
+    content = prosody.text
 
     max_chars = req.max_chars_per_chunk or int(os.getenv("QWEN_TTS_PLAN_MAX_CHARS", "90"))
     max_chars = max(20, min(int(max_chars), int(os.getenv("QWEN_TTS_PLAN_MAX_CHARS_LIMIT", "240"))))
@@ -941,6 +956,7 @@ async def tts_plan(req: TTSPlanRequest) -> JSONResponse:
         max_chars=max_chars,
         min_chars=min_chars,
         max_segments=max_segments,
+        sanitize=False,
     )
     payload_chunks = [
         {
@@ -957,9 +973,11 @@ async def tts_plan(req: TTSPlanRequest) -> JSONResponse:
         "[TTS] "
         f"plan trace_id={req.trace_id or '-'} text_len={len(content)} "
         f"chunks={len(chunks)} max_chars={max_chars} longest={longest} "
-        f"truncated={truncated} sanitized={normalized.changed} "
+        f"truncated={truncated} sanitized={normalized.changed or prosody.changed} "
         f"normalizer={normalized.normalizer} "
-        f"normalization_tokens={len(normalized.normalization_trace)}",
+        f"normalization_tokens={len(normalized.normalization_trace)} "
+        f"prosody={prosody.source} prosody_changed={prosody.changed} "
+        f"prosody_latency_ms={prosody.latency_ms} prosody_error={prosody.error or '-'}",
         flush=True,
     )
     return JSONResponse(
@@ -970,9 +988,14 @@ async def tts_plan(req: TTSPlanRequest) -> JSONResponse:
             "chunks": payload_chunks,
             "total_chunks": len(payload_chunks),
             "truncated": truncated,
-            "sanitized": normalized.changed,
+            "sanitized": normalized.changed or prosody.changed,
             "normalizer": normalized.normalizer,
             "normalization_trace": list(normalized.normalization_trace),
+            "prosody_optimizer": prosody.source,
+            "prosody_changed": prosody.changed,
+            "prosody_latency_ms": prosody.latency_ms,
+            "prosody_error": prosody.error,
+            "prosody_trace": prosody.to_trace(),
         }
     )
 

@@ -51,6 +51,34 @@
   ./install_qwen3_tts_ray_user_service.sh
   ```
   该脚本会写入 `~/.config/systemd/user/qwen3-tts-ray.service`，执行 `daemon-reload`，并 `enable --now`。
+- 2026-07-02 已将本机 TTS 语调优化参数固化进 `~/.config/systemd/user/qwen3-tts-ray.service`：
+  ```ini
+  Environment=QWEN_TTS_PROSODY_OPTIMIZER_ENABLED=1
+  Environment=QWEN_TTS_PROSODY_BASE_URL=http://agx.taild500c8.ts.net:11434/v1
+  Environment=QWEN_TTS_PROSODY_MODEL=caps-voice-edit-qwen3-4b:latest
+  Environment=QWEN_TTS_PROSODY_TIMEOUT_S=2.5
+  Environment=QWEN_TTS_PROSODY_MAX_TOKENS=160
+  Environment=QWEN_TTS_PROSODY_MAX_INPUT_CHARS=1200
+  ```
+  修改该 service 文件后需要执行：
+  ```bash
+  systemctl --user daemon-reload
+  systemctl --user restart qwen3-tts-ray.service
+  ```
+  验证配置是否生效：
+  ```bash
+  systemctl --user show qwen3-tts-ray.service --property=Environment --no-pager \
+    | tr ' ' '\n' | rg "QWEN_TTS_PROSODY"
+  curl -sS http://127.0.0.1:8091/api/status | jq '.planning.prosody'
+  ```
+  轻量 live check：
+  ```bash
+  curl -sS http://127.0.0.1:8091/api/tts/plan \
+    -H "Content-Type: application/json" \
+    -d '{"text":"好的按照你说的来吧","lang_hint":"Chinese","trace_id":"prosody-check"}' \
+    | jq '{text, prosody_optimizer, prosody_changed, prosody_error, prosody_latency_ms}'
+  ```
+  预期 `prosody_optimizer` 为 `agx_lm`、`prosody_changed` 为 `true`；若 AGX 小模型不可用，会自动 fallback，不影响 TTS 生成。
 
 ## 模型目录
 

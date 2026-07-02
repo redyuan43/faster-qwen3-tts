@@ -2,6 +2,7 @@ from examples.single_gpu_custom_voice_server import (
     AppState,
     CapsWriterSpeakRequest,
     SpeechRequest,
+    TTSPlanRequest,
     _estimate_max_new_tokens,
     _hit_token_cap,
     _next_retry_tokens,
@@ -10,9 +11,12 @@ from examples.single_gpu_custom_voice_server import (
     _split_tts_text_into_chunks,
     _synthesize,
     _status_payload,
+    tts_plan,
     _to_wav_bytes,
 )
+from examples.tts_prosody_planner import ProsodyPlan
 import asyncio
+import json
 import numpy as np
 import pytest
 from fastapi import HTTPException
@@ -125,8 +129,35 @@ def test_single_gpu_status_payload_recommends_single_concurrency():
     assert payload["api_version"] == "tts-http-v1"
     assert payload["capabilities"]["supports_trace_id"] is True
     assert payload["capabilities"]["supports_wav_validation"] is True
+    assert payload["capabilities"]["supports_prosody_optimization"] is True
+    assert "prosody" in payload["planning"]
     assert payload["client_defaults"]["recommended_speak_concurrency"] == 1
     assert payload["client_defaults"]["recommended_prefetch_chunks"] == 1
+
+
+def test_single_gpu_tts_plan_applies_prosody_optimizer(monkeypatch):
+    import examples.single_gpu_custom_voice_server as server
+
+    def fake_optimize(text, lang_hint=None, trace_id=None):
+        assert "好的按照你说的来吧" in text
+        assert lang_hint == "Chinese"
+        assert trace_id == "single-prosody-test"
+        return ProsodyPlan("好的。按照你说的来吧。", True, "local_lm", 9, "pause")
+
+    monkeypatch.setenv("QWEN_TTS_NORMALIZER", "basic")
+    monkeypatch.setattr(server, "optimize_prosody", fake_optimize)
+
+    response = asyncio.run(
+        tts_plan(TTSPlanRequest(text="好的按照你说的来吧", lang_hint="Chinese", trace_id="single-prosody-test"))
+    )
+    payload = json.loads(response.body.decode("utf-8"))
+
+    assert payload["text"] == "好的。按照你说的来吧。"
+    assert payload["chunks"][0]["text"] == "好的。按照你说的来吧。"
+    assert payload["prosody_optimizer"] == "local_lm"
+    assert payload["prosody_changed"] is True
+    assert payload["prosody_latency_ms"] == 9
+    assert payload["sanitized"] is True
 
 
 def test_single_gpu_quality_failure_raises_instead_of_returning_bad_audio(monkeypatch):

@@ -178,6 +178,26 @@ QWEN_TTS_BACKUP_URLS=http://edge-host:8091 \
 ./start_qwen3_tts_gateway.sh
 ```
 
+The planning endpoint can optionally stabilize TTS prosody with an
+OpenAI-compatible small model before chunking. The start scripts pass these
+settings through to the Ray or single-GPU service:
+
+```bash
+QWEN_TTS_PROSODY_OPTIMIZER_ENABLED=1 \
+QWEN_TTS_PROSODY_BASE_URL=http://agx.taild500c8.ts.net:11434/v1 \
+QWEN_TTS_PROSODY_MODEL=caps-voice-edit-qwen3-4b:latest \
+QWEN_TTS_PROSODY_TIMEOUT_S=2.5 \
+QWEN_TTS_PROSODY_MAX_TOKENS=160 \
+QWEN_TTS_PROSODY_MAX_INPUT_CHARS=1200 \
+QWEN_TTS_HOST=127.0.0.1 QWEN_TTS_PORT=8092 \
+./start_qwen3_tts_ray.sh
+```
+
+When installed as a user systemd service, put the same values in the service
+file and run `systemctl --user daemon-reload && systemctl --user restart
+qwen3-tts-ray.service`. See [`docs/api.md`](docs/api.md) for the `/api/tts/plan`
+response fields and fallback behavior.
+
 The gateway retries backup backends when the primary connection fails, times out,
 or returns a 5xx response. Responses include `X-TTS-Backend`,
 `X-TTS-Backend-Url`, and `X-TTS-Failover` headers so callers can tell which
